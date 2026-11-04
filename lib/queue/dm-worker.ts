@@ -1609,6 +1609,12 @@ export function createDMWorker(): Worker<DmQueueJob> {
   const worker = new Worker<DmQueueJob>("dm-processing", processJob, {
     connection: getRedisConnection(),
     concurrency: 5,
+    // An idle worker still talks to Redis on every drain cycle and stalled-job
+    // check. Hosted Redis plans that bill per command (Upstash's free tier is
+    // 500k/month) run out at the BullMQ defaults, so both are tunable. A new
+    // job still wakes the blocked worker immediately; only idle polling slows.
+    drainDelay: Number(process.env.WORKER_DRAIN_DELAY_SECONDS ?? 5),
+    stalledInterval: Number(process.env.WORKER_STALLED_INTERVAL_MS ?? 30_000),
     settings: {
       backoffStrategy: (attemptsMade: number) =>
         BACKOFF_DELAYS[Math.min(attemptsMade - 1, BACKOFF_DELAYS.length - 1)],
