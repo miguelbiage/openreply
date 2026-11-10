@@ -1301,9 +1301,12 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
   const dedupeId = `dm:${messageId}`;
 
   for (const automation of automations) {
-    const matchResult = automation.matchAnyWord
-      ? { matched: true, matchedKeyword: null }
-      : matchKeywords(
+    // "Any word" is a comment setting. Applied to DMs it answered every message
+    // in the inbox (spam, "amém", replies to stories) with the campaign link, so
+    // the DM trigger only fires on real keywords.
+    if (automation.matchAnyWord || automation.keywords.length === 0) continue;
+
+    const matchResult = matchKeywords(
           messageText,
           automation.keywords,
           automation.wholeWordMatch

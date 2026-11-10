@@ -23,6 +23,20 @@ function createPrismaClient() {
     connectionString: databaseUrl,
     max: Number(process.env.DB_POOL_MAX ?? 3),
     idleTimeoutMillis: 10_000,
+    // After a network drop a socket can stay half-open: no error, no reply.
+    // Without these limits every pooled connection waits forever and the worker
+    // stops delivering DMs while still looking alive.
+    connectionTimeoutMillis: 15_000,
+    query_timeout: 60_000,
+    keepAlive: true,
+  });
+
+  // The pooler drops idle connections now and then (ECONNRESET). pg.Pool emits
+  // that as an 'error' event, and with no listener Node kills the whole process
+  // — which took the DM worker down silently. The broken client is discarded
+  // and the next query opens a fresh one, so logging is enough.
+  pool.on("error", (err) => {
+    console.error("[db] idle connection dropped:", err.message);
   });
 
   // Prisma Migrate honours `?schema=` in the URL but the pg adapter does not, so
