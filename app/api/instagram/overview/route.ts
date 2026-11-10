@@ -5,6 +5,7 @@ import { getWorkspaceInstagramAccount } from "@/lib/instagram-accounts";
 import {
   getAllUserMedia,
   getMediaInsights,
+  getRecentMediaComments,
   PermissionError,
   type InstagramMedia,
 } from "@/lib/instagram/provider";
@@ -171,10 +172,33 @@ export async function GET(request: NextRequest) {
       }
     );
 
+    // Instagram's comments_count includes the account's own replies, and every
+    // campaign with a public reply answers each comment, roughly doubling the
+    // figure. Count only comments written by other people; fall back to the raw
+    // count if the comment list can't be read.
+    const audienceComments = await mapWithConcurrency(
+      media,
+      INSIGHTS_CONCURRENCY,
+      async (m) => {
+        if (!m.comments_count) return 0;
+        try {
+          const list = await getRecentMediaComments({
+            context: accessToken,
+            mediaId: m.id,
+            sinceMs: 0,
+            max: 2000,
+          });
+          return list.filter((c) => c.from?.id !== account.instagramId).length;
+        } catch {
+          return m.comments_count;
+        }
+      }
+    );
+
     const posts: OverviewPost[] = media.map((m, i) => {
       const ins = insights[i];
       const likes = m.like_count ?? 0;
-      const comments = m.comments_count ?? 0;
+      const comments = audienceComments[i];
       return {
         id: m.id,
         caption: m.caption?.trim().slice(0, 120) ?? null,
