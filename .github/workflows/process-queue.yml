@@ -1,0 +1,22 @@
+name: Process DM queue
+
+# Vercel's free crons only run once a day. This calls the queue route every
+# 5 minutes so delayed DMs and comments missed by webhooks still go out.
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  process-queue:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Call the queue route
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          APP_URL: ${{ vars.APP_URL || 'https://openreply-miguel.vercel.app' }}
+        run: |
+          curl --fail --silent --show-error --max-time 90 \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/cron/process-queue"

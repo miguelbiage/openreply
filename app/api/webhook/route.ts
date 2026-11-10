@@ -1,10 +1,14 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db/client";
 import {
   parseCommentEvents,
   verifyWebhookSignature,
 } from "@/lib/meta/webhook";
 import { processInstagramWebhook } from "@/lib/queue/process-webhook";
+import { drainDMQueue } from "@/lib/queue/dm-worker";
+
+// Leaves room for drainDMQueue to send the DMs right after Meta gets its 200.
+export const maxDuration = 60;
 
 
 export async function GET(request: NextRequest) {
@@ -63,6 +67,7 @@ export async function POST(request: NextRequest) {
 
   try {
     await processInstagramWebhook({ payload: payload as Parameters<typeof parseCommentEvents>[0], provider: 'META' });
+    after(() => drainDMQueue());
     return NextResponse.json({ success: true });
   } catch {
     return NextResponse.json({ success: false, error: 'Webhook processing failed' }, { status: 500 });

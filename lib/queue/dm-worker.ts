@@ -1608,8 +1608,9 @@ async function recordWorkerFailure(
   }
 }
 
-export function createDMWorker(): Worker<DmQueueJob> {
+export function createDMWorker({ autorun = true }: { autorun?: boolean } = {}): Worker<DmQueueJob> {
   const worker = new Worker<DmQueueJob>("dm-processing", processJob, {
+    autorun,
     connection: getRedisConnection(),
     concurrency: 5,
     // An idle worker still talks to Redis on every drain cycle and stalled-job
@@ -1656,4 +1657,26 @@ export function createDMWorker(): Worker<DmQueueJob> {
   });
 
   return worker;
+}
+
+/**
+ * Process whatever is due in the queue, then stop. Serverless hosts (Vercel)
+ * can't keep a worker running, so webhooks and a scheduled route call this
+ * instead. Returns once the queue is empty or the time budget runs out; a job
+ * cut off by the host's timeout is picked up again by the next drain as a
+ * stalled job.
+ */
+export async function drainDMQueue({ budgetMs = 40_000 }: { budgetMs?: number } = {}) {
+  const worker = createDMWorker({ autorun: false });
+  let processed = 0;
+  worker.on("completed", () => processed++);
+  worker.on("failed", () => processed++);
+  const drained = new Promise<void>((resolve) => worker.once("drained", () => resolve()));
+  const timeout = new Promise<void>((resolve) => setTimeout(resolve, budgetMs));
+  void worker.run().catch((error) => {
+    console.error("[DM Worker] Drain run failed:", formatError(error));
+  });
+  await Promise.race([drained, timeout]);
+  await worker.close();
+  return { processed };
 }
