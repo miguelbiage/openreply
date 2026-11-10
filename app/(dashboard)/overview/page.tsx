@@ -14,6 +14,7 @@ import { useEffect, useState } from "react";
 import AccountSelect from "@/components/account-select";
 import StatCard from "@/components/stat-card";
 import FollowerChart from "@/components/follower-chart";
+import PostDetails from "@/components/post-details";
 import type { OverviewResponse } from "@/app/api/instagram/overview/route";
 
 function formatNumber(n: number | null, locale: Locale): string {
@@ -42,6 +43,7 @@ export default function OverviewPage() {
   const [error, setError] = useState<string | null>(null);
   const [selectedAccountId, setSelectedAccountId] = useState("all");
   const [count, setCount] = useState("50");
+  const [openPostId, setOpenPostId] = useState<string | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams();
@@ -215,23 +217,26 @@ export default function OverviewPage() {
                 {posts.map((p) => (
                   <tr
                     key={p.id}
-                    className="border-b border-border last:border-0"
+                    onClick={() => setOpenPostId(p.id)}
+                    className="cursor-pointer border-b border-border last:border-0 hover:bg-zinc-100/60"
                   >
                     <td className="py-3 pr-4 max-w-xs">
-                      {p.permalink ? (
-                        <a
-                          href={p.permalink}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-foreground hover:text-accent truncate block"
-                        >
-                          {p.caption || t("{type} post", { type: p.mediaType })}
-                        </a>
-                      ) : (
-                        <span className="text-foreground truncate block">
+                      <div className="flex items-center gap-3">
+                        {p.thumbnailUrl ? (
+                          <img
+                            src={p.thumbnailUrl}
+                            alt=""
+                            loading="lazy"
+                            decoding="async"
+                            className="h-14 w-10 shrink-0 rounded object-cover"
+                          />
+                        ) : (
+                          <div className="h-14 w-10 shrink-0 rounded bg-zinc-200/60" />
+                        )}
+                        <span className="text-foreground hover:text-accent truncate block">
                           {p.caption || t("{type} post", { type: p.mediaType })}
                         </span>
-                      )}
+                      </div>
                     </td>
                     <td className="py-3 px-3 text-right text-muted">
                       {formatNumber(p.views, locale)}
@@ -261,6 +266,14 @@ export default function OverviewPage() {
           </div>
         )}
       </div>
+
+      {openPostId && (
+        <PostDetails
+          postId={openPostId}
+          instagramAccountId={selectedAccountId}
+          onClose={() => setOpenPostId(null)}
+        />
+      )}
     </div>
   );
 }

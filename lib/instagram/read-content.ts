@@ -108,6 +108,20 @@ export async function getUserMedia({
   }));
 }
 
+export async function getMedia({
+  context,
+  mediaId,
+}: {
+  context: InstagramContext;
+  mediaId: string;
+}): Promise<meta.InstagramMedia | null> {
+  if (context.provider === "META")
+    return meta.getMedia(context.accessToken, mediaId);
+  // Zernio has no single-post lookup; its post list covers the recent 25.
+  const posts = await getUserMedia({ context });
+  return posts.find((p) => p.id === mediaId) ?? null;
+}
+
 export async function getAllUserMedia({
   context,
   max = 500,

@@ -117,6 +117,13 @@ export interface InstagramMediaInsights {
   saved?: number;
   shares?: number;
   total_interactions?: number;
+  // Reels only, in milliseconds.
+  ig_reels_avg_watch_time?: number;
+  ig_reels_video_view_total_time?: number;
+  // Feed posts only.
+  follows?: number;
+  profile_visits?: number;
+  profile_activity?: number;
 }
 
 interface TokenResponse {
@@ -694,6 +701,18 @@ export async function getUserMedia(
   const response = await fetch(url.toString());
   const data = await handleResponse<{ data: InstagramMedia[] }>(response);
   return data.data;
+}
+
+export async function getMedia(
+  accessToken: string,
+  mediaId: string
+): Promise<InstagramMedia> {
+  const url = new URL(`${instagramGraphBase()}/${mediaId}`);
+  url.searchParams.set("fields", MEDIA_FIELDS);
+  url.searchParams.set("access_token", accessToken);
+
+  const response = await fetch(url.toString());
+  return handleResponse<InstagramMedia>(response);
 }
 
 /**
