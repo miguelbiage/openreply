@@ -1,5 +1,6 @@
 import { createDMWorker } from "@/lib/queue/dm-worker";
 import { prisma } from "@/lib/db/client";
+import { getDMQueue, getRedisConnection } from "@/lib/queue/client";
 import { recordWorkerHeartbeat } from "@/lib/ops/worker-health";
 import { reconcileComments } from "@/lib/polling/comment-reconciler";
 import { attachPendingNextReels } from "@/lib/automation/attach-next-reel";
@@ -32,38 +33,50 @@ async function heartbeat() {
 void heartbeat();
 const heartbeatTimer = setInterval(() => void heartbeat(), HEARTBEAT_INTERVAL_MS);
 
-// The heartbeat lives in Redis, so it stays green even when the database is
-// unreachable and every job is stuck waiting on it. Probe the database too and
-// exit after a few straight failures: the supervisor restarts the process with
-// fresh connections.
-const DB_PROBE_TIMEOUT_MS = 20_000;
-const DB_PROBE_MAX_FAILURES = 4;
-let dbProbeFailures = 0;
+// The heartbeat only proves the process can write to Redis. After a network
+// drop the database pool or BullMQ's blocking Redis connection can stay dead
+// while the heartbeat recovers, and comments pile up in the queue unanswered.
+// Probe all three every 30s and exit after a few straight failures: the
+// supervisor restarts the process with fresh connections.
+const PROBE_TIMEOUT_MS = 20_000;
+const PROBE_MAX_FAILURES = 4;
+// A job waiting this long means nothing is pulling from the queue.
+const STALE_WAITING_JOB_MS = 3 * 60_000;
+let probeFailures = 0;
 
-async function probeDatabase() {
+function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out`)), PROBE_TIMEOUT_MS)
+    ),
+  ]);
+}
+
+async function probeHealth() {
   try {
-    await Promise.race([
-      prisma.$queryRaw`SELECT 1`,
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("timed out")), DB_PROBE_TIMEOUT_MS)
-      ),
-    ]);
-    dbProbeFailures = 0;
+    await withTimeout(prisma.$queryRaw`SELECT 1`, "database");
+    await withTimeout(getRedisConnection().ping(), "redis");
+    const [oldest] = await withTimeout(getDMQueue().getWaiting(-1, -1), "queue");
+    if (oldest && Date.now() - oldest.timestamp > STALE_WAITING_JOB_MS) {
+      throw new Error(`job ${oldest.id} waiting since ${new Date(oldest.timestamp).toISOString()}`);
+    }
+    probeFailures = 0;
   } catch (error) {
-    dbProbeFailures++;
+    probeFailures++;
     const message = error instanceof Error ? error.message : "Unknown error";
     console.error(
-      `[DM Worker] Database probe failed (${dbProbeFailures}/${DB_PROBE_MAX_FAILURES}):`,
+      `[DM Worker] Health probe failed (${probeFailures}/${PROBE_MAX_FAILURES}):`,
       message
     );
-    if (dbProbeFailures >= DB_PROBE_MAX_FAILURES) {
-      console.error("[DM Worker] Database unreachable, exiting for a restart");
+    if (probeFailures >= PROBE_MAX_FAILURES) {
+      console.error("[DM Worker] Not delivering, exiting for a restart");
       process.exit(1);
     }
   }
 }
 
-const dbProbeTimer = setInterval(() => void probeDatabase(), HEARTBEAT_INTERVAL_MS);
+const probeTimer = setInterval(() => void probeHealth(), HEARTBEAT_INTERVAL_MS);
 
 async function poll() {
   try {
@@ -85,7 +98,7 @@ const pollTimer = setInterval(() => void poll(), POLL_INTERVAL_MS);
 async function shutdown(signal: string) {
   console.log(`[DM Worker] ${signal} received, closing worker`);
   clearInterval(heartbeatTimer);
-  clearInterval(dbProbeTimer);
+  clearInterval(probeTimer);
   clearInterval(pollTimer);
   await worker.close();
   process.exit(0);
